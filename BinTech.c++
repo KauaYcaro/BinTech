@@ -20,6 +20,7 @@ LiquidCrystal lcd(8,9,4,5,6,7);
 #define TRIG 11
 #define ECHO 10
 #define LED 12
+#define BUZZER_PIN 13
 
 //==== MAGIC NUMBERS ====
 #define DISTANCIA_SENSOR 30
@@ -132,7 +133,17 @@ void processarBotao() { //experimental
         } else if (digitalRead(SIM) == LOW) {
             //sem comportamento definido para SIM no estado IDLE ou LENDO
         }
-        if (codigoInput.length() >= CODIGOSIZE) {
+        if (codigoInput.length >= CODIGOSIZE) {
+            if (codigoInput == "11111") {
+                for (int i=0; i < quantidadeAlunos; i++) {
+                  Serial.print(aluno[i].nome);
+                  Serial.print(",");
+                  Serial.print(aluno[i].turma);
+                  Serial.print(",");
+                  Serial.print(aluno[i].pontos);
+                  Serial.println();
+                }
+            }
             indexAlunoAtual = encontrarAluno(codigoInput);
         }
     } else { //se o caso for ATIVO
