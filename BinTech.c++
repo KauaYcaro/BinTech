@@ -1,24 +1,19 @@
-//==== PORTAS ====
 #include <LiquidCrystal.h>
+
+//==== PORTAS ====
 LiquidCrystal lcd(8,9,4,5,6,7);
 #define TRIG 11
 #define ECHO 10
-
-//==== VARIÁVEIS DO BOTÃO ====
-String botao = "";
-bool botaoApertado = false;
+#define BUTTONS A0
 
 //==== MAGIC NUMBERS ====
-#define DISTANCIA_SENSOR 30
+#define DISTANCIA_SENSOR 5
 #define CODIGOSIZE 5
 #define DEBOUNCE 200
 #define PONTOSPORITEM 100
-#define BEEP_CURTO 80
-#define BEEP_MEDIO 250
-#define BEEP_LONGO 700
 #define DELAY_CURTO 2000
 #define DELAY_MEDIO 5000
-#define DELAY_LONGO 10000
+#define DELAY_LONGO 20000
 
 //==== BANCO DE ALUNOS ====
 struct Aluno {
@@ -27,8 +22,9 @@ struct Aluno {
     String turma;
     int pontos;
 };
+
 Aluno aluno[] = {
-    {"33333", "Kauã Y", "3° TDS A", 0},
+    {"12341", "Kauã Y", "3° TDS A", 0},
     {"11424", "V Daniel", "3° TDS A", 0},
     {"12234", "Kaio A", "3° TDS A", 0},
     {"11122", "Ingridy N", "3° TDS A", 0},
@@ -43,30 +39,59 @@ enum State{IDLE, LENDO, ATIVO};
 String codigoInput = "";
 int indexAlunoAtual = -1;
 int pontosSessao = 0;
+String botao = "";
 State estado = IDLE;
 
+//=== FILTRO DE SENSOR ====
+const int LEITURAS_CONSECUTIVAS = 3;
+int contadorDeteccao = 0;
+
 //==== FUNÇÕES DO SISTEMA ====
+void exibirPontos() {
+    lcd.clear();
+    lcd.setCursor(0,0);
+    lcd.print("Pontos:");
+    lcd.setCursor(0,1);
+    lcd.print(pontosSessao);
+}
 
-void lerBotao() {
-  int leitura = analogRead(A0);
-  String leituraAtual = "";
+void responderDeteccao() {
+    lcd.clear();
+    lcd.setCursor(0,0);
+    lcd.print("Detectado!");
+    lcd.setCursor(0,1);
+    lcd.print("Aguarde...");
+    delay(DELAY_CURTO);
+    pontosSessao += PONTOSPORITEM;
+    exibirPontos();
+}
 
-  if (leitura < 50) leituraAtual = "3";
-  else if (leitura < 195) leituraAtual = "1";
-  else if (leitura < 380) leituraAtual = "4";
-  else if (leitura < 555) leituraAtual = "2";
-  else if (leitura < 790) leituraAtual = "SIM";
+void detectarItem() {
+    long duracao;
+    float distancia;
 
-  if (leituraAtual != "" && !botaoApertado) {
-    botao = leituraAtual;
-    botaoApertado = true;
-    delay(DEBOUNCE);
-  } else if (leituraAtual == "") {
-    botaoApertado = false; // Botão foi solto
-    botao = "";
-  } else {
-    botao = ""; // Evita repetir o mesmo botão
-  }
+    digitalWrite(TRIG, LOW);
+    delayMicroseconds(2);
+    digitalWrite(TRIG, HIGH);
+    delayMicroseconds(10);
+    digitalWrite(TRIG, LOW);
+
+    duracao = pulseIn(ECHO, HIGH);
+    distancia = duracao * 0.034 / 2;
+
+    Serial.print("Distancia: ");
+    Serial.println(distancia);
+
+    if (distancia < DISTANCIA_SENSOR) {
+        contadorDeteccao++;
+    } else {
+        contadorDeteccao = 0;
+    }
+
+    if (contadorDeteccao >= LEITURAS_CONSECUTIVAS) {
+        responderDeteccao();
+        contadorDeteccao = 0;
+    }
 }
 
 void resetar() {
@@ -76,16 +101,33 @@ void resetar() {
     estado = IDLE;
 }
 
-void beep(int tempo) {
-    Serial.print("Ia fazer um buzzer aq");
-    delay(tempo);
-}
+//==== BOTÕES DO SHIELD ====
+String encontrarBotao() {
+    static String ultimoBotao = "";
+    static unsigned long ultimoTempo = 0;
+    String botaoAtual = "";
 
-void triplebeep() {
-    for(int i=0; i<3; i++) {
-        beep(BEEP_CURTO);
-        delay(100);
+    int leitura = analogRead(BUTTONS);
+    unsigned long agora = millis();
+
+    if (leitura < 100) botaoAtual = "DIR";
+    else if (leitura < 200) botaoAtual = "CIM";
+    else if (leitura < 300) botaoAtual = "BAI";
+    else if (leitura < 500) botaoAtual = "ESQ";
+    else if (leitura < 700) botaoAtual = "SEL";
+    else botaoAtual = "";
+
+    if (botaoAtual != "" && botaoAtual != ultimoBotao && (agora - ultimoTempo) > DEBOUNCE) {
+        ultimoBotao = botaoAtual;
+        ultimoTempo = agora;
+        return botaoAtual;
     }
+
+    if (botaoAtual == "") {
+        ultimoBotao = "";
+    }
+
+    return "";
 }
 
 //==== FUNÇÕES IDLE ====
@@ -98,112 +140,52 @@ void exibirMensagemInicial() {
 }
 
 //==== FUNÇÕES LENDO ====
-void processarBotao() {
-    lerBotao();
-    if (botao == "") return;
-
-    if (estado == IDLE || estado == LENDO) {
-        if (botao == "1" || botao == "2" || botao == "3" || botao == "4") {
-            codigoInput += botao;
-            estado = LENDO;
-            beep(BEEP_CURTO);
-            lcd.clear();
-            lcd.setCursor(0,0);
-            lcd.print(codigoInput);
-        } else if (botao == "SIM") {
-            // Nenhuma ação definida no estado IDLE/LENDO
-        }
-
-        if (codigoInput.length() >= CODIGOSIZE) {
-            if (codigoInput == "11111") {
-                for (int i=0; i < quantidadeAlunos; i++) {
-                    Serial.print(aluno[i].nome);
-                    Serial.print(",");
-                    Serial.print(aluno[i].turma);
-                    Serial.print(",");
-                    Serial.print(aluno[i].pontos);
-                    Serial.println();
-                }
-            }
-            indexAlunoAtual = encontrarAluno(codigoInput);
-        }
-    } else if (estado == ATIVO) {
-        if (botao == "SIM") {
-            finalizarSessao();
-        }
-    }
-}
-
 int encontrarAluno(String codigoInput) {
     for(int i=0; i<quantidadeAlunos; i++) {
-        if (aluno[i].codigo == codigoInput) {
-            return i;
-        }
+        if (aluno[i].codigo == codigoInput) return i;
     }
     return -2;
 }
 
-//==== FUNÇÕES ATIVO ====
-
-void detectarItem() {
-    long duracao;
-    float distancia;
-
-    digitalWrite(TRIG, LOW);
-    delayMicroseconds(0.1);
-    digitalWrite(TRIG, HIGH);
-    delayMicroseconds(1);
-    digitalWrite(TRIG, LOW);
-
-    duracao = pulseIn(ECHO, HIGH);
-    distancia = duracao*0.034/2;
-
-    Serial.print("Distancia: ");
-    Serial.print(distancia);
-    Serial.print("cm.");
-
-    if (distancia < DISTANCIA_SENSOR) {
-        Serial.write("LED");
-        responderDeteccao();
-    }
-}
-
-void responderDeteccao() {
-    beep(BEEP_MEDIO);
-    lcd.clear();
-    lcd.setCursor(0,0);
-    lcd.print("Detectado!");
-    lcd.setCursor(0,1);
-    lcd.print("Aguarde...");
-    delay(DELAY_CURTO);
-    pontosSessao += PONTOSPORITEM;
-    exibirPontos();
-}
-
-void exibirPontos() {
-    beep(BEEP_LONGO);
-    lcd.clear();
-    lcd.setCursor(0,0);
-    lcd.print("Pontos:");
-    lcd.setCursor(0,1);
-    lcd.print(pontosSessao);
-}
-
 void finalizarSessao() {
-    beep(BEEP_LONGO);
     aluno[indexAlunoAtual].pontos += pontosSessao;
     lcd.clear();
     lcd.setCursor(0,0);
-    lcd.print("Sessão Encerrada");
+    lcd.print("Sessao Encerrada");
     delay(DELAY_CURTO);
     lcd.clear();
     lcd.setCursor(0,0);
     lcd.print(aluno[indexAlunoAtual].nome);
     lcd.setCursor(0,1);
     lcd.print(aluno[indexAlunoAtual].pontos);
-    lcd.print("pts");
+    lcd.print(" pts");
     delay(DELAY_LONGO);
     estado = IDLE;
+}
+
+//==== PROCESSAMENTO DE BOTÕES ====
+void processarBotao() {
+    botao = encontrarBotao();
+
+    if (estado == IDLE || estado == LENDO) {
+        if (botao == "CIM") codigoInput += "1";
+        else if (botao == "DIR") codigoInput += "2";
+        else if (botao == "ESQ") codigoInput += "3";
+        else if (botao == "BAI") codigoInput += "4";
+
+        if (botao != "") {
+            estado = LENDO;
+            lcd.clear();
+            lcd.setCursor(0,0);
+            lcd.print(codigoInput);
+        }
+
+        if (codigoInput.length() >= CODIGOSIZE) {
+            indexAlunoAtual = encontrarAluno(codigoInput);
+        }
+    } else if (estado == ATIVO) {
+        if (botao == "SEL") finalizarSessao();
+    }
 }
 
 //==== SETUP E LOOP ====
@@ -211,7 +193,7 @@ void setup() {
     Serial.begin(9600);
     pinMode(TRIG, OUTPUT);
     pinMode(ECHO, INPUT);
-    
+
     lcd.begin(16,2);
     exibirMensagemInicial();
     resetar();
@@ -239,19 +221,18 @@ void loop() {
                 estado = ATIVO;
                 break;
             } else if (indexAlunoAtual == -2) {
-                triplebeep();
                 lcd.clear();
                 lcd.setCursor(0,0);
                 lcd.print("NOT FOUND");
                 delay(DELAY_MEDIO);
-                beep(BEEP_LONGO);
                 estado = IDLE;
                 break;
             }
+            break;
         case ATIVO:
             processarBotao();
             detectarItem();
-            delay(DEBOUNCE);
+            delay(50); // pequeno delay para não travar
             break;
     }
 }
